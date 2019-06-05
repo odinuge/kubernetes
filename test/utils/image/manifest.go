@@ -195,6 +195,8 @@ const (
 	VolumeGlusterServer
 	// VolumeRBDServer image
 	VolumeRBDServer
+	// HugePageTester
+	HugePageTester
 )
 
 func initImageConfigs() map[int]Config {
@@ -250,6 +252,7 @@ func initImageConfigs() map[int]Config {
 	configs[VolumeISCSIServer] = Config{e2eRegistry, "volume/iscsi", "2.0"}
 	configs[VolumeGlusterServer] = Config{e2eRegistry, "volume/gluster", "1.0"}
 	configs[VolumeRBDServer] = Config{e2eRegistry, "volume/rbd", "1.0.1"}
+	configs[HugePageTester] = Config{"docker.io", "odinuge/hugepage-tester", "1.0"}
 	return configs
 }
 

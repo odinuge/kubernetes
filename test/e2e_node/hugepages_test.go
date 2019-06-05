@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -38,19 +37,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// makePodToVerifyHugePages returns a pod that verifies specified cgroup with hugetlb
-func makePodToVerifyHugePages(baseName string, hugePagesLimit resource.Quantity) *apiv1.Pod {
-	// convert the cgroup name to its literal form
-	cgroupFsName := ""
-	cgroupName := cm.NewCgroupName(cm.RootCgroupName, defaultNodeAllocatableCgroup, baseName)
-	if framework.TestContext.KubeletConfig.CgroupDriver == "systemd" {
-		cgroupFsName = cgroupName.ToSystemd()
-	} else {
-		cgroupFsName = cgroupName.ToCgroupfs()
-	}
-
-	// this command takes the expected value and compares it against the actual value for the pod cgroup hugetlb.2MB.limit_in_bytes
-	command := fmt.Sprintf("expected=%v; actual=$(cat /tmp/hugetlb/%v/hugetlb.2MB.limit_in_bytes); if [ \"$expected\" -ne \"$actual\" ]; then exit 1; fi; ", hugePagesLimit.Value(), cgroupFsName)
+// makeHugePagePod returns a pod that requests the the given amount of huge page memory, and execute the given command
+func makeHugePagePod(baseName string, command string, totalHugePageMemory resource.Quantity, hugePageSize resource.Quantity) *apiv1.Pod {
 	e2elog.Logf("Pod to run command: %v", command)
 	pod := &apiv1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -60,22 +48,29 @@ func makePodToVerifyHugePages(baseName string, hugePagesLimit resource.Quantity)
 			RestartPolicy: apiv1.RestartPolicyNever,
 			Containers: []apiv1.Container{
 				{
-					Image:   busyboxImage,
+					Image:   imageutils.GetE2EImage(imageutils.HugePageTester),
 					Name:    "container" + string(uuid.NewUUID()),
 					Command: []string{"sh", "-c", command},
+					Resources: apiv1.ResourceRequirements{
+						Limits: apiv1.ResourceList{
+							apiv1.ResourceName("cpu"):                                resource.MustParse("10m"),
+							apiv1.ResourceName("memory"):                             resource.MustParse("100Mi"),
+							apiv1.ResourceName("hugepages-" + hugePageSize.String()): totalHugePageMemory,
+						},
+					},
 					VolumeMounts: []apiv1.VolumeMount{
 						{
-							Name:      "sysfscgroup",
-							MountPath: "/tmp",
+							Name:      "hugetlb",
+							MountPath: "/hugetlb",
 						},
 					},
 				},
 			},
 			Volumes: []apiv1.Volume{
 				{
-					Name: "sysfscgroup",
+					Name: "hugetlb",
 					VolumeSource: apiv1.VolumeSource{
-						HostPath: &apiv1.HostPathVolumeSource{Path: "/sys/fs/cgroup"},
+						EmptyDir: &apiv1.EmptyDirVolumeSource{Medium: "HugePages"},
 					},
 				},
 			},
@@ -106,9 +101,9 @@ func enableHugePagesInKubelet(f *framework.Framework) *kubeletconfig.KubeletConf
 	return oldCfg
 }
 
-// configureHugePages attempts to allocate 100Mi of 2Mi hugepages for testing purposes
-func configureHugePages() error {
-	err := exec.Command("/bin/sh", "-c", "echo 50 > /proc/sys/vm/nr_hugepages").Run()
+// configureHugePages attempts to allocate _pageCount_ hugepages of the default hugepage size for testing purposes
+func configureHugePages(pageCount int64) error {
+	err := exec.Command("/bin/sh", "-c", fmt.Sprintf("echo %d > /proc/sys/vm/nr_hugepages", pageCount)).Run()
 	if err != nil {
 		return err
 	}
@@ -121,10 +116,10 @@ func configureHugePages() error {
 		return err
 	}
 	e2elog.Logf("HugePages_Total is set to %v", numHugePages)
-	if numHugePages == 50 {
+	if int64(numHugePages) == pageCount {
 		return nil
 	}
-	return fmt.Errorf("expected hugepages %v, but found %v", 50, numHugePages)
+	return fmt.Errorf("expected hugepages %v, but found %v", pageCount, numHugePages)
 }
 
 // releaseHugePages releases all pre-allocated hugepages
@@ -132,13 +127,28 @@ func releaseHugePages() error {
 	return exec.Command("/bin/sh", "-c", "echo 0 > /proc/sys/vm/nr_hugepages").Run()
 }
 
-// isHugePageSupported returns true if the default hugepagesize on host is 2Mi (i.e. 2048 kB)
-func isHugePageSupported() bool {
+// getDefaultHugePageSize returns the default huge page size, and a boolean if huge pages are supported
+func getDefaultHugePageSize() (resource.Quantity, bool) {
 	outData, err := exec.Command("/bin/sh", "-c", "cat /proc/meminfo | grep 'Hugepagesize:' | awk '{print $2}'").Output()
 	framework.ExpectNoError(err)
 	pageSize, err := strconv.Atoi(strings.TrimSpace(string(outData)))
 	framework.ExpectNoError(err)
-	return pageSize == 2048
+	if pageSize == 0 {
+		return resource.Quantity{}, false
+	}
+	return *resource.NewQuantity(int64(pageSize*1024), resource.BinarySI), true
+}
+
+func getTestValues() (hugePageSize resource.Quantity, totalMemory resource.Quantity, pageCount int64) {
+	hugePageSize, _ = getDefaultHugePageSize()
+	// If huge page size is  equal to bigger than 1GB, only use two pages
+	if hugePageSize.Value() >= (1 << 30) {
+		pageCount = 2
+	} else {
+		pageCount = 20
+	}
+	totalMemory = *resource.NewQuantity(hugePageSize.Value()*pageCount, resource.BinarySI)
+	return
 }
 
 // pollResourceAsString polls for a specified resource and capacity from node
@@ -160,35 +170,41 @@ func amountOfResourceAsString(node *apiv1.Node, resourceName string) string {
 }
 
 func runHugePagesTests(f *framework.Framework) {
+	fileName := "/hugetlb/file"
 	It("should assign hugepages as expected based on the Pod spec", func() {
-		By("by running a G pod that requests hugepages")
-		pod := f.PodClient().Create(&apiv1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "pod" + string(uuid.NewUUID()),
-				Namespace: f.Namespace.Name,
-			},
-			Spec: apiv1.PodSpec{
-				Containers: []apiv1.Container{
-					{
-						Image: imageutils.GetPauseImageName(),
-						Name:  "container" + string(uuid.NewUUID()),
-						Resources: apiv1.ResourceRequirements{
-							Limits: apiv1.ResourceList{
-								apiv1.ResourceName("cpu"):           resource.MustParse("10m"),
-								apiv1.ResourceName("memory"):        resource.MustParse("100Mi"),
-								apiv1.ResourceName("hugepages-2Mi"): resource.MustParse("50Mi"),
-							},
-						},
-					},
-				},
-			},
-		})
-		podUID := string(pod.UID)
-		By("checking if the expected hugetlb settings were applied")
-		verifyPod := makePodToVerifyHugePages("pod"+podUID, resource.MustParse("50Mi"))
+		hugePageSize, totalHugePageMemory, _ := getTestValues()
+		By("running a pod that requests hugepages and allocates the memory")
+		command := fmt.Sprintf(`./hugetlb-tester %d %d %s`, totalHugePageMemory.Value(), hugePageSize.Value(), fileName)
+
+		verifyPod := makeHugePagePod("hugepage-pod", command, totalHugePageMemory, hugePageSize)
 		f.PodClient().Create(verifyPod)
 		err := framework.WaitForPodSuccessInNamespace(f.ClientSet, verifyPod.Name, f.Namespace.Name)
+		By("checking that pod execution succeeded")
 		Expect(err).NotTo(HaveOccurred())
+
+	})
+	It("should not be possible to allocate more hugepage memory than the Pod spec", func() {
+		hugePageSize, totalHugePageMemory, _ := getTestValues()
+		By("running a pod that requests hugepages and allocates twice the amount of the requested memory")
+		command := fmt.Sprintf(`./hugetlb-tester %d %d %s`, totalHugePageMemory.Value()*2, hugePageSize.Value(), fileName)
+
+		verifyPod := makeHugePagePod("hugepage-pod", command, totalHugePageMemory, hugePageSize)
+		f.PodClient().Create(verifyPod)
+		err := framework.WaitForPodSuccessInNamespace(f.ClientSet, verifyPod.Name, f.Namespace.Name)
+		By("checking that pod execution failed")
+		Expect(err).To(HaveOccurred())
+	})
+	It("should not be possible to allocate hugepage memory with a huge page size not requested in the Pod spec", func() {
+		hugePageSize, totalHugePageMemory, _ := getTestValues()
+		By("running a pod that requests hugepages and allocates using a page size euqal to twice the requested size")
+		command := fmt.Sprintf(`./hugetlb-tester %d %d %s`, totalHugePageMemory.Value(), hugePageSize.Value()*2, fileName)
+
+		verifyPod := makeHugePagePod("hugepage-pod", command, totalHugePageMemory, hugePageSize)
+		f.PodClient().Create(verifyPod)
+		err := framework.WaitForPodSuccessInNamespace(f.ClientSet, verifyPod.Name, f.Namespace.Name)
+		By("checking that pod execution failed")
+		Expect(err).To(HaveOccurred())
+
 	})
 }
 
@@ -201,13 +217,16 @@ var _ = SIGDescribe("HugePages [Serial] [Feature:HugePages][NodeFeature:HugePage
 
 		BeforeEach(func() {
 			By("verifying hugepages are supported")
-			if !isHugePageSupported() {
+
+			hugePageSize, supported := getDefaultHugePageSize()
+			_, totalHugePageMemory, pageCount := getTestValues()
+			if !supported {
 				framework.Skipf("skipping test because hugepages are not supported")
 				return
 			}
 			By("configuring the host to reserve a number of pre-allocated hugepages")
 			Eventually(func() error {
-				err := configureHugePages()
+				err := configureHugePages(pageCount)
 				if err != nil {
 					return err
 				}
@@ -219,8 +238,8 @@ var _ = SIGDescribe("HugePages [Serial] [Feature:HugePages][NodeFeature:HugePage
 			restartKubelet()
 			By("by waiting for hugepages resource to become available on the local node")
 			Eventually(func() string {
-				return pollResourceAsString(f, "hugepages-2Mi")
-			}, 30*time.Second, framework.Poll).Should(Equal("100Mi"))
+				return pollResourceAsString(f, "hugepages-"+hugePageSize.String())
+			}, 30*time.Second, framework.Poll).Should(Equal(totalHugePageMemory.String()))
 		})
 
 		runHugePagesTests(f)
@@ -241,8 +260,9 @@ var _ = SIGDescribe("HugePages [Serial] [Feature:HugePages][NodeFeature:HugePage
 			By("restarting kubelet to release hugepages")
 			restartKubelet()
 			By("by waiting for hugepages resource to not appear available on the local node")
+			hugePageSize, _ := getDefaultHugePageSize()
 			Eventually(func() string {
-				return pollResourceAsString(f, "hugepages-2Mi")
+				return pollResourceAsString(f, "hugepages-"+hugePageSize.String())
 			}, 30*time.Second, framework.Poll).Should(Equal("0"))
 		})
 	})
