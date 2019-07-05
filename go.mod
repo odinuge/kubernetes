@@ -116,7 +116,7 @@ require (
 	github.com/onsi/gomega v0.0.0-20190113212917-5533ce8a0da3
 	github.com/opencontainers/go-digest v0.0.0-20170106003457-a6d0ee40d420
 	github.com/opencontainers/image-spec v0.0.0-20170604055404-372ad780f634 // indirect
-	github.com/opencontainers/runc v0.0.0-20181113202123-f000fe11ece1
+	github.com/opencontainers/runc v0.0.0-20190705000000-7d8e65205371a29917c425a9f4142f4ab592a392
 	github.com/opencontainers/runtime-spec v1.0.0 // indirect
 	github.com/opencontainers/selinux v0.0.0-20170621221121-4a2974bf1ee9
 	github.com/pborman/uuid v1.2.0
@@ -349,7 +349,7 @@ replace (
 	github.com/onsi/gomega => github.com/onsi/gomega v0.0.0-20190113212917-5533ce8a0da3
 	github.com/opencontainers/go-digest => github.com/opencontainers/go-digest v0.0.0-20170106003457-a6d0ee40d420
 	github.com/opencontainers/image-spec => github.com/opencontainers/image-spec v0.0.0-20170604055404-372ad780f634
-	github.com/opencontainers/runc => github.com/opencontainers/runc v0.0.0-20181113202123-f000fe11ece1
+	github.com/opencontainers/runc => github.com/odinuge/runc v0.0.0-20190705000000-7d8e65205371a29917c425a9f4142f4ab592a392
 	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.0.0
 	github.com/opencontainers/selinux => github.com/opencontainers/selinux v0.0.0-20170621221121-4a2974bf1ee9
 	github.com/pborman/uuid => github.com/pborman/uuid v1.2.0

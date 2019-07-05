@@ -670,7 +670,7 @@ github.com/opencontainers/go-digest
 # github.com/opencontainers/image-spec v0.0.0-20170604055404-372ad780f634 => github.com/opencontainers/image-spec v0.0.0-20170604055404-372ad780f634
 github.com/opencontainers/image-spec/specs-go
 github.com/opencontainers/image-spec/specs-go/v1
-# github.com/opencontainers/runc v0.0.0-20181113202123-f000fe11ece1 => github.com/opencontainers/runc v0.0.0-20181113202123-f000fe11ece1
+# github.com/opencontainers/runc v0.0.0-20190705000000-7d8e65205371a29917c425a9f4142f4ab592a392 => github.com/odinuge/runc v0.0.0-20190705000000-7d8e65205371a29917c425a9f4142f4ab592a392
 github.com/opencontainers/runc/libcontainer
 github.com/opencontainers/runc/libcontainer/apparmor
 github.com/opencontainers/runc/libcontainer/cgroups
