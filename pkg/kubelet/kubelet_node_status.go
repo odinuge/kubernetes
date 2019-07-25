@@ -119,6 +119,7 @@ func (kl *Kubelet) tryRegisterWithAPIServer(node *v1.Node) bool {
 	requiresUpdate := kl.reconcileCMADAnnotationWithExistingNode(node, existingNode)
 	requiresUpdate = kl.updateDefaultLabels(node, existingNode) || requiresUpdate
 	requiresUpdate = kl.reconcileExtendedResource(node, existingNode) || requiresUpdate
+	requiresUpdate = kl.reconcileHugePageSizes(node, existingNode) || requiresUpdate
 	if requiresUpdate {
 		if _, _, err := nodeutil.PatchNodeStatus(kl.kubeClient.CoreV1(), types.NodeName(kl.nodeName), originalNode, existingNode); err != nil {
 			klog.Errorf("Unable to reconcile node %q with API server: error updating node: %v", kl.nodeName, err)
@@ -127,6 +128,35 @@ func (kl *Kubelet) tryRegisterWithAPIServer(node *v1.Node) bool {
 	}
 
 	return true
+}
+
+// reconcileHugePageSizes will update huge page capacity for each page size and remove huge page sizes no longer supported
+func (kl *Kubelet) reconcileHugePageSizes(initialNode, node *v1.Node) bool {
+	requiresUpdate := false
+	for k := range node.Status.Capacity {
+		if !v1helper.IsHugePageResourceName(k) {
+			continue
+		}
+
+		// If huge page size no longer is supported, we remove it from the new node
+		if _, initialNodeHasResource := initialNode.Status.Capacity[k]; !initialNodeHasResource {
+			delete(node.Status.Capacity, k)
+			requiresUpdate = true
+		}
+	}
+	for k, value := range initialNode.Status.Capacity {
+		if !v1helper.IsHugePageResourceName(k) {
+			continue
+		}
+
+		// If huge page size is new or if value has changed, set the new value
+		if resourceValue, hasResource := node.Status.Capacity[k]; !hasResource || resourceValue.Cmp(value) != 0 {
+			node.Status.Capacity[k] = *value.Copy()
+			requiresUpdate = true
+		}
+
+	}
+	return requiresUpdate
 }
 
 // Zeros out extended resource capacity during reconciliation.

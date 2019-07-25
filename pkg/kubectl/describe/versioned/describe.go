@@ -3347,7 +3347,17 @@ func describeNodeResource(nodeNonTerminatedPodsList *corev1.PodList, node *corev
 		corev1.ResourceEphemeralStorage, ephemeralstorageReqs.String(), int64(fractionEphemeralStorageReqs), ephemeralstorageLimits.String(), int64(fractionEphemeralStorageLimits))
 	extResources := make([]string, 0, len(allocatable))
 	for resource := range allocatable {
-		if !resourcehelper.IsStandardContainerResourceName(string(resource)) && resource != corev1.ResourcePods {
+		if resourcehelper.IsHugePageResourceName(resource) {
+			hugePageSizeRequests, hugePageSizeLimits, hugePageSizeAllocable := reqs[corev1.ResourceName(resource)], limits[corev1.ResourceName(resource)], allocatable[corev1.ResourceName(resource)]
+			fractionHugePageSizeRequests := float64(0)
+			fractionHugePageSizeLimits := float64(0)
+			if hugePageSizeAllocable.Value() != 0 {
+				fractionHugePageSizeRequests = float64(hugePageSizeRequests.Value()) / float64(hugePageSizeAllocable.Value()) * 100
+				fractionHugePageSizeLimits = float64(hugePageSizeLimits.Value()) / float64(hugePageSizeAllocable.Value()) * 100
+			}
+			w.Write(LEVEL_1, "%s\t%s (%d%%)\t%s (%d%%)\n",
+				resource, hugePageSizeRequests.String(), int64(fractionHugePageSizeRequests), hugePageSizeLimits.String(), int64(fractionHugePageSizeLimits))
+		} else if !resourcehelper.IsStandardContainerResourceName(string(resource)) && resource != corev1.ResourcePods {
 			extResources = append(extResources, string(resource))
 		}
 	}
