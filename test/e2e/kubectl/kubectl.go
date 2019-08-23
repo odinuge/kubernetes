@@ -718,7 +718,7 @@ metadata:
 			gomega.Expect(err).To(gomega.ContainSubstring(fmt.Sprintf("POST https://%s/api/v1/namespaces/%s/configmaps", inClusterURL, f.Namespace.Name)))
 
 			ginkgo.By("trying to use kubectl with invalid token")
-			_, err = framework.RunHostCmd(ns, simplePodName, "/tmp/kubectl get pods --token=invalid --v=7 2>&1")
+			_, err = framework.RunHostCmd(ns, simplePodName, "/tmp/kubectl get pods --token=<masked> --v=7 2>&1")
 			e2elog.Logf("got err %v", err)
 			framework.ExpectError(err)
 			gomega.Expect(err).To(gomega.ContainSubstring("Using in-cluster namespace"))
