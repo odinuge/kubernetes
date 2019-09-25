@@ -147,6 +147,7 @@ if [ "${remote}" = true ] ; then
     --zone="${zone}" --project="${project}" --gubernator="${gubernator}" \
     --hosts="${hosts}" --images="${images}" --cleanup="${cleanup}" \
     --results-dir="${artifacts}" --ginkgo-flags="${ginkgoflags}" \
+    --test-timeout="200m" \
     --image-project="${image_project}" --instance-name-prefix="${instance_prefix}" \
     --delete-instances="${delete_instances}" --test_args="${test_args}" --instance-metadata="${metadata}" \
     --image-config-file="${image_config_file}" --system-spec-name="${system_spec_name}" \
