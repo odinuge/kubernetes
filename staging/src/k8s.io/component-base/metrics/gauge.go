@@ -19,6 +19,7 @@ package metrics
 import (
 	"github.com/blang/semver"
 	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/klog"
 )
 
 // Gauge is our internal representation for our wrapping struct around prometheus
@@ -144,8 +145,10 @@ func (v *GaugeVec) WithLabelValues(lvs ...string) GaugeMetric {
 // been registered to a metrics registry.
 func (v *GaugeVec) With(labels prometheus.Labels) GaugeMetric {
 	if !v.IsCreated() {
+		klog.V(4).Infof("FooBarNo: %+v", v)
 		return noop // return no-op gauge
 	}
+	klog.V(4).Infof("FooBarGoooood: %+v", v)
 	return v.GaugeVec.With(labels)
 }
 

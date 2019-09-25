@@ -176,6 +176,10 @@ func (s *nodeConfigStatus) Sync(client clientset.Interface, nodeName string) {
 	// update metrics based on the status we will sync
 	metrics.SetConfigError(len(status.Error) > 0)
 	err = metrics.SetAssignedConfig(status.Assigned)
+	if !metrics.AssignedConfig.IsCreated() {
+		err = fmt.Errorf("Foo, Bar: %+v", metrics.AssignedConfig)
+		return
+	}
 	if err != nil {
 		err = fmt.Errorf("failed to update Assigned config metric, error: %v", err)
 		return
