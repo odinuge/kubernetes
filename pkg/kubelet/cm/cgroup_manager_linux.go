@@ -456,48 +456,12 @@ func (m *cgroupManagerImpl) Update(cgroupConfig *CgroupConfig) error {
 	return nil
 }
 func ApplyBar(pid int, m *cgroupsystemd.LegacyManager) error {
+
 	var (
 		c          = m.Cgroups
 		unitName   = getUnitName(c)
-		slice      = "system.slice"
 		properties []systemdDbus.Property
 	)
-
-	if c.Parent != "" {
-		slice = c.Parent
-	}
-
-	properties = append(properties, systemdDbus.PropDescription("libcontainer container "+c.Name))
-
-	// if we create a slice, the parent is defined via a Wants=
-	if strings.HasSuffix(unitName, ".slice") {
-		properties = append(properties, systemdDbus.PropWants(slice))
-	} else {
-		// otherwise, we use Slice=
-		properties = append(properties, systemdDbus.PropSlice(slice))
-	}
-
-	// only add pid if its valid, -1 is used w/ general slice creation.
-	if pid != -1 {
-		properties = append(properties, newProp("PIDs", []uint32{uint32(pid)}))
-	}
-
-	// Check if we can delegate. This is only supported on systemd versions 218 and above.
-	if !strings.HasSuffix(unitName, ".slice") {
-		// Assume scopes always support delegation.
-		properties = append(properties, newProp("Delegate", true))
-	}
-
-	// Always enable accounting, this gets us the same behaviour as the fs implementation,
-	// plus the kernel has some problems with joining the memory cgroup at a later time.
-	properties = append(properties,
-		newProp("MemoryAccounting", true),
-		newProp("CPUAccounting", true),
-		newProp("BlockIOAccounting", true))
-
-	// Assume DefaultDependencies= will always work (the check for it was previously broken.)
-	properties = append(properties,
-		newProp("DefaultDependencies", false))
 
 	if c.Resources.Memory != 0 {
 		properties = append(properties,
@@ -529,23 +493,14 @@ func ApplyBar(pid int, m *cgroupsystemd.LegacyManager) error {
 			newProp("CPUQuotaPerSecUSec", cpuQuotaPerSecUSec))
 	}
 
-	if c.Resources.BlkioWeight != 0 {
-		properties = append(properties,
-			newProp("BlockIOWeight", uint64(c.Resources.BlkioWeight)))
-	}
-
-	if c.Resources.PidsLimit > 0 {
-		properties = append(properties,
-			newProp("TasksAccounting", true),
-			newProp("TasksMax", uint64(c.Resources.PidsLimit)))
-	}
-
 	// TODO make this a global
-	theConn, _ := systemdDbus.New()
+	theConn, err := systemdDbus.New()
 
 	//if _, err := theConn.StartTransientUnit(unitName, "replace", properties, statusChan); err == nil {
+	fmt.Printf("Bazz: is on RIPOfire: Odin:odin:dsa %q, err: %+v,\nlen:%d\nAll: %+v \n All resources: %+v\n", unitName, err, len(properties), properties, c.Resources)
 	if err := theConn.SetUnitProperties(unitName, true, properties...); err == nil {
 		// TODO logging
+		fmt.Printf("Bazz: Noooo %+v\n", err)
 	}
 	return nil
 }

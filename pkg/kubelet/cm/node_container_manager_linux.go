@@ -44,6 +44,7 @@ func (cm *containerManagerImpl) createNodeAllocatableCgroups() error {
 		ResourceParameters: getCgroupConfig(cm.internalCapacity),
 	}
 	if cm.cgroupManager.Exists(cgroupConfig.Name) {
+		klog.Errorf("Bazz: Will do stufffffffff, cus exists %qq", cm.cgroupRoot)
 		return nil
 	}
 	if err := cm.cgroupManager.Create(cgroupConfig); err != nil {
