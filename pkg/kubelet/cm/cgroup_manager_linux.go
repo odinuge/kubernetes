@@ -18,6 +18,9 @@ package cm
 
 import (
 	"fmt"
+	systemdDbus "github.com/coreos/go-systemd/dbus"
+	"github.com/godbus/dbus"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -443,7 +446,122 @@ func (m *cgroupManagerImpl) Update(cgroupConfig *CgroupConfig) error {
 	if err := setSupportedSubsystems(libcontainerCgroupConfig); err != nil {
 		return fmt.Errorf("failed to set supported cgroup subsystems for cgroup %v: %v", cgroupConfig.Name, err)
 	}
+	if m.adapter.cgroupManagerType == libcontainerSystemd {
+		manager, err := m.adapter.newManager(libcontainerCgroupConfig, nil)
+		if err != nil {
+			return err
+		}
+		ApplyBar(-1, manager.(*cgroupsystemd.LegacyManager))
+	}
 	return nil
+}
+func ApplyBar(pid int, m *cgroupsystemd.LegacyManager) error {
+	var (
+		c          = m.Cgroups
+		unitName   = getUnitName(c)
+		slice      = "system.slice"
+		properties []systemdDbus.Property
+	)
+
+	if c.Parent != "" {
+		slice = c.Parent
+	}
+
+	properties = append(properties, systemdDbus.PropDescription("libcontainer container "+c.Name))
+
+	// if we create a slice, the parent is defined via a Wants=
+	if strings.HasSuffix(unitName, ".slice") {
+		properties = append(properties, systemdDbus.PropWants(slice))
+	} else {
+		// otherwise, we use Slice=
+		properties = append(properties, systemdDbus.PropSlice(slice))
+	}
+
+	// only add pid if its valid, -1 is used w/ general slice creation.
+	if pid != -1 {
+		properties = append(properties, newProp("PIDs", []uint32{uint32(pid)}))
+	}
+
+	// Check if we can delegate. This is only supported on systemd versions 218 and above.
+	if !strings.HasSuffix(unitName, ".slice") {
+		// Assume scopes always support delegation.
+		properties = append(properties, newProp("Delegate", true))
+	}
+
+	// Always enable accounting, this gets us the same behaviour as the fs implementation,
+	// plus the kernel has some problems with joining the memory cgroup at a later time.
+	properties = append(properties,
+		newProp("MemoryAccounting", true),
+		newProp("CPUAccounting", true),
+		newProp("BlockIOAccounting", true))
+
+	// Assume DefaultDependencies= will always work (the check for it was previously broken.)
+	properties = append(properties,
+		newProp("DefaultDependencies", false))
+
+	if c.Resources.Memory != 0 {
+		properties = append(properties,
+			newProp("MemoryLimit", uint64(c.Resources.Memory)))
+	}
+
+	if c.Resources.CpuShares != 0 {
+		properties = append(properties,
+			newProp("CPUShares", c.Resources.CpuShares))
+	}
+
+	// cpu.cfs_quota_us and cpu.cfs_period_us are controlled by systemd.
+	if c.Resources.CpuQuota != 0 && c.Resources.CpuPeriod != 0 {
+		// corresponds to USEC_INFINITY in systemd
+		// if USEC_INFINITY is provided, CPUQuota is left unbound by systemd
+		// always setting a property value ensures we can apply a quota and remove it later
+		cpuQuotaPerSecUSec := uint64(math.MaxUint64)
+		if c.Resources.CpuQuota > 0 {
+			// systemd converts CPUQuotaPerSecUSec (microseconds per CPU second) to CPUQuota
+			// (integer percentage of CPU) internally.  This means that if a fractional percent of
+			// CPU is indicated by Resources.CpuQuota, we need to round up to the nearest
+			// 10ms (1% of a second) such that child cgroups can set the cpu.cfs_quota_us they expect.
+			cpuQuotaPerSecUSec = uint64(c.Resources.CpuQuota*1000000) / c.Resources.CpuPeriod
+			if cpuQuotaPerSecUSec%10000 != 0 {
+				cpuQuotaPerSecUSec = ((cpuQuotaPerSecUSec / 10000) + 1) * 10000
+			}
+		}
+		properties = append(properties,
+			newProp("CPUQuotaPerSecUSec", cpuQuotaPerSecUSec))
+	}
+
+	if c.Resources.BlkioWeight != 0 {
+		properties = append(properties,
+			newProp("BlockIOWeight", uint64(c.Resources.BlkioWeight)))
+	}
+
+	if c.Resources.PidsLimit > 0 {
+		properties = append(properties,
+			newProp("TasksAccounting", true),
+			newProp("TasksMax", uint64(c.Resources.PidsLimit)))
+	}
+
+	// TODO make this a global
+	theConn, _ := systemdDbus.New()
+
+	//if _, err := theConn.StartTransientUnit(unitName, "replace", properties, statusChan); err == nil {
+	if err := theConn.SetUnitProperties(unitName, true, properties...); err == nil {
+		// TODO logging
+	}
+	return nil
+}
+func newProp(name string, units interface{}) systemdDbus.Property {
+	return systemdDbus.Property{
+		Name:  name,
+		Value: dbus.MakeVariant(units),
+	}
+}
+
+func getUnitName(c *libcontainerconfigs.Cgroup) string {
+	// by default, we create a scope unless the user explicitly asks for a slice.
+	if !strings.HasSuffix(c.Name, ".slice") {
+		return fmt.Sprintf("%s-%s.scope", c.ScopePrefix, c.Name)
+	}
+	return c.Name
 }
 
 // Create creates the specified cgroup
