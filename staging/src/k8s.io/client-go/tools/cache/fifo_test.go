@@ -36,6 +36,9 @@ type testFifoObject struct {
 func mkFifoObj(name string, val interface{}) testFifoObject {
 	return testFifoObject{name: name, val: val}
 }
+func mkFifoPtr(name string, val interface{}) *testFifoObject {
+	return &testFifoObject{name: name, val: val}
+}
 
 func TestFIFO_basic(t *testing.T) {
 	f := NewFIFO(testFifoObjectKeyFunc)

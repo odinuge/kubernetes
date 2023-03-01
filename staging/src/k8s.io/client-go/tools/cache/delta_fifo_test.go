@@ -34,8 +34,10 @@ func testPop(f *DeltaFIFO) testFifoObject {
 // function that returns a slice of objects to list and get.
 // The function must list the same objects every time.
 type literalListerGetter func() []testFifoObject
+type ptrListerGetter func() []*testFifoObject
 
 var _ KeyListerGetter = literalListerGetter(nil)
+var _ KeyListerGetter = ptrListerGetter(nil)
 
 // ListKeys just calls kl.
 func (kl literalListerGetter) ListKeys() []string {
@@ -48,6 +50,25 @@ func (kl literalListerGetter) ListKeys() []string {
 
 // GetByKey returns the key if it exists in the list returned by kl.
 func (kl literalListerGetter) GetByKey(key string) (interface{}, bool, error) {
+	for _, v := range kl() {
+		if v.name == key {
+			return v, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// ListKeys just calls kl.
+func (kl ptrListerGetter) ListKeys() []string {
+	result := []string{}
+	for _, fifoObj := range kl() {
+		result = append(result, fifoObj.name)
+	}
+	return result
+}
+
+// GetByKey returns the key if it exists in the list returned by kl.
+func (kl ptrListerGetter) GetByKey(key string) (interface{}, bool, error) {
 	for _, v := range kl() {
 		if v.name == key {
 			return v, true, nil
@@ -454,6 +475,54 @@ func TestDeltaFIFO_DeleteExistingNonPropagated(t *testing.T) {
 	}
 }
 
+func testFifoObjectKeyFunc2(obj interface{}) (string, error) {
+	return obj.(*testFifoObject).name, nil
+}
+
+func TestDeltaFIFO_MutateDuringDeltaProcessing(t *testing.T) {
+	f := NewDeltaFIFO(
+		testFifoObjectKeyFunc2,
+		nil,
+	)
+	f.Add(mkFifoPtr("baz", 10))
+	f.Replace([]interface{}{}, "0")
+
+	expected := Deltas{
+		{Added, mkFifoPtr("baz", 10)},
+		{Deleted, DeletedFinalStateUnknown{Key: "baz", Obj: mkFifoPtr("baz", 10)}},
+	}
+
+	cur := Pop(f).(Deltas)
+	if e, a := expected, cur; !reflect.DeepEqual(e, a) {
+		t.Errorf("Expected %#v, got %#v", e, a)
+	}
+	for i, d := range cur {
+		obj := d.Object
+		tombstone, ok := obj.(DeletedFinalStateUnknown)
+		if ok {
+			obj = tombstone.Obj
+		}
+		test, ok := obj.(*testFifoObject)
+		if !ok || test == nil {
+			t.Fatalf("this is not expected, it should be of the correct type")
+		}
+		if !reflect.DeepEqual(expected[i], d) {
+			expectedObj := expected[i].Object
+			tombstone, ok = obj.(DeletedFinalStateUnknown)
+			if ok {
+				expectedObj = tombstone.Obj
+			}
+			t.Errorf("Expected object; %#v, but got %#v", expectedObj, obj)
+			t.Fatalf("Expected delta;  %#v, but got %#v", expected[i], d)
+		}
+		// IMPORTANT; Uncomment to make the test fail
+		// mimic a conversion function that clear the initial objects
+		// example; https://github.com/cilium/cilium/blob/77c7d6d36cbc3cd16762ff093be575aa3d2ceed0/pkg/k8s/factory_functions.go#L622
+
+		//*test = testFifoObject{}
+	}
+
+}
 func TestDeltaFIFO_ReplaceMakesDeletions(t *testing.T) {
 	// We test with only one pre-existing object because there is no
 	// promise about how their deletes are ordered.
